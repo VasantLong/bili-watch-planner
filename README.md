@@ -17,7 +17,8 @@
 - **自动跳过补丁P**：隐藏 <30s 的分P（比如"宝箱数从 184 变为 177"这类 12 秒修正），可关闭。
 - **简介里的链接**：扫描视频简介和分P标题里提到的其他 B 站视频（BV / av / b23 / 系列），一键加进列表一起统计——攻略系列经常靠简介串起来。
 - **增量追加**：解析完一个系列后，勾上「追加到当前列表」再贴下一个链接（系列 / 合集 / 单个 BV 都行），
-  新来源按 BV 号去重后并入同一张表，时长、勾选、导出全部按合并后的整体计算。
+  新来源按 BV 号去重后并入同一张表，时长、勾选、导出全部按合并后的整体计算；
+  同一个链接重复解析不会产生重复视频，也不会在来源条里堆出重复来源。
 - **挑选后导出**：勾选任意视频，只按所选导出 CSV，附源视频与来源标签，方便做观看清单。
 - **汇总卡片**：已选视频数 / 分P数 / 总时长 / 平均每P。
 
@@ -122,9 +123,11 @@ nohup python3 bili_planner.py --host 127.0.0.1 --port 8770 > /tmp/bili-planner.l
 ```text
 bili_planner.py     # 抓取 + 聚合 + CLI + HTTP 服务（纯标准库）
 static/index.html   # 单页前端（内联 CSS/JS）
-test_planner.py     # unittest 用例（解析 / 聚合 / 链接提取）
+test_planner.py     # unittest 用例（解析 / 聚合 / 合并 / 链接提取 / 输出）
 run.sh              # 启动脚本
-.github/workflows/  # CI：Python 3.9–3.13 跑单测
+scripts/release.sh  # 发版：改版本号 + 跑测试 + 推 main（tag 与 Release 交给 CI）
+scripts/check_ui.py # 前端内联脚本语法自检（node --check）
+.github/workflows/  # CI：tests.yml 跑单测；release.yml 按 __version__ 自动打 tag 发 Release
 ```
 
 ## 测试
@@ -133,7 +136,24 @@ run.sh              # 启动脚本
 python3 -m unittest -v test_planner
 ```
 
-19 个用例，覆盖输入解析、时长聚合、链接提取、输出写入。
+30 个用例，覆盖输入解析、时长聚合、多来源合并去重、链接提取、输出写入。
+
+前端没有构建步骤，改过 `static/index.html` 记得跑 `python3 scripts/check_ui.py`（用 `node --check`
+兜住模板字符串把 JS 写坏的坑，CI 也会跑）。
+
+## 发版
+
+版本号只有一个来源：`bili_planner.py` 里的 `__version__`。**不要手工 `git tag` 或 `gh release create`。**
+
+```bash
+bash scripts/release.sh 1.1.2            # 改版本号 → 跑测试 → 提交 → 推 main
+bash scripts/release.sh 1.1.2 notes.md   # 顺带把发布说明写进 release-notes/v1.1.2.md
+bash scripts/release.sh 1.1.2 --no-push  # 只准备提交，不推
+```
+
+推上去之后 `.github/workflows/release.yml` 会：读 `__version__` → 跑测试 → tag `v1.1.2` → 发 Release
+（有 `release-notes/v1.1.2.md` 就用它，否则自动生成）。若已有同名 tag 却又有产品代码改动，
+workflow 会直接失败，提醒你补版本号——代码版本、tag、Release 三者始终一致。
 
 ## 已知限制
 

@@ -215,13 +215,16 @@ def merge_groups(groups):
     videos = []
     index = {}
     sources = []
+    seen_src = set()
     for data in groups:
         label = source_label(data)
         batch = data.get("videos") or []
         referer = data.get("source") or data.get("url")
-        sources.append({"label": label, "kind": data.get("kind"),
-                        "title": data.get("title"), "count": len(batch),
-                        "url": data.get("url") or referer})
+        if label not in seen_src:  # 同一个链接解析两次：来源只记一条
+            seen_src.add(label)
+            sources.append({"label": label, "kind": data.get("kind"),
+                            "title": data.get("title"), "count": len(batch),
+                            "url": data.get("url") or referer})
         for video in batch:
             key = str(video.get("bvid") or "").upper()
             if not key:
@@ -233,7 +236,8 @@ def merge_groups(groups):
                 for field in ("links", "desc", "owner", "error"):
                     if not held.get(field) and video.get(field):
                         held[field] = video[field]
-                held.setdefault("also_in", []).append(label)
+                if held.get("from") != label:
+                    held.setdefault("also_in", []).append(label)
                 continue
             item = dict(video)
             item["from"] = label
@@ -245,12 +249,12 @@ def merge_groups(groups):
             videos.append(item)
     if not groups:
         return {"kind": "merged", "title": "没有来源", "videos": [], "sources": []}
-    if len(groups) == 1:
+    if len(sources) == 1:  # 只有一个实际来源（含同链接重复解析）：保持原结构
         merged = dict(groups[0])
         merged["videos"] = videos
         merged["sources"] = sources
         return merged
-    return {"kind": "merged", "title": "合并 %d 个来源" % len(groups),
+    return {"kind": "merged", "title": "合并 %d 个来源" % len(sources),
             "videos": videos, "sources": sources,
             "source": groups[0].get("source") or groups[0].get("url")}
 

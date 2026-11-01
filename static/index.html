@@ -244,13 +244,19 @@ function mergeIncoming(data, label) {
     else state.parts[v.bvid] = v.parts;
     added++;
   });
-  state.sources = (state.sources || []).concat([{
-    label: label, kind: data.kind, title: data.title,
-    count: (data.videos || []).length, url: data.url
-  }]);
-  if (state.data.kind !== "merged") state.data.kind = "merged";
-  state.data.title = "合并 " + state.sources.length + " 个来源";
-  return { added: added, dupe: dupe };
+  // 同一个链接解析两次：来源只记一条，标题也别变成「合并 1 个来源」
+  var dupSource = (state.sources || []).some(function (s) { return s.label === label; });
+  if (!dupSource) {
+    state.sources = (state.sources || []).concat([{
+      label: label, kind: data.kind, title: data.title,
+      count: (data.videos || []).length, url: data.url
+    }]);
+  }
+  if (state.sources.length > 1) {
+    state.data.kind = "merged";
+    state.data.title = "合并 " + state.sources.length + " 个来源";
+  }
+  return { added: added, dupe: dupe, dupSource: dupSource };
 }
 
 function startResolve(query, append) {
@@ -271,9 +277,12 @@ function startResolve(query, append) {
       renderSources();
       loadPartsQueue();
       updateProgress();
-      setStatus("已追加 " + res.added + " 个视频"
-        + (res.dupe ? "（跳过 " + res.dupe + " 个重复）" : "")
-        + "，现有 " + videos().length + " 个" + (res.added || !res.dupe ? "" : "：该来源已在列表里"));
+      var bits = [];
+      if (res.added) bits.push("已追加 " + res.added + " 个视频");
+      if (res.dupe) bits.push("跳过 " + res.dupe + " 个重复视频");
+      if (res.dupSource) bits.push("来源 " + label + " 已在列表里");
+      if (!bits.length) bits.push("没有新增内容");
+      setStatus(bits.join("；") + "，现有 " + videos().length + " 个");
     } else {
       state.data = payload.data;
       state.sources = [{ label: label, kind: payload.data.kind, title: payload.data.title,

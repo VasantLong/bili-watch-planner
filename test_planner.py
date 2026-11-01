@@ -161,6 +161,24 @@ class TestMergeGroups(unittest.TestCase):
     def test_empty_groups(self):
         self.assertEqual(merge_groups([])['videos'], [])
 
+    def test_same_source_twice_dedupes_sources(self):
+        merged = merge_groups([self._series(11, ['BV1aaaaaaaaa', 'BV1bbbbbbbbb']),
+                               self._series(11, ['BV1aaaaaaaaa', 'BV1bbbbbbbbb'])])
+        self.assertEqual(len(merged['sources']), 1)
+        self.assertEqual(merged['sources'][0]['label'], 'series-11')
+        self.assertEqual(len(merged['videos']), 2)
+        # 只剩一个实际来源：不走 merged 形态，标题不该被改成「合并 1 个来源」
+        self.assertEqual(merged['kind'], 'series')
+        self.assertEqual(merged['title'], '系列 11')
+        self.assertNotIn('also_in', merged['videos'][0])
+
+    def test_same_video_twice_dedupes_sources(self):
+        merged = merge_groups([self._video('BV1aaaaaaaaa'), self._video('BV1aaaaaaaaa')])
+        self.assertEqual(len(merged['sources']), 1)
+        self.assertEqual(len(merged['videos']), 1)
+        self.assertEqual(merged['videos'][0]['from'], 'video-BV1aaaaaaaaa')
+        self.assertNotIn('also_in', merged['videos'][0])
+
 
 class TestWriteMerged(unittest.TestCase):
     def test_stamp_and_source_column(self):
@@ -180,6 +198,18 @@ class TestWriteMerged(unittest.TestCase):
             self.assertIn('source', rows[0].split(','))
             self.assertIn('series-11', rows[1] + rows[2])
             self.assertIn('video-BV1bbbbbbbbb', rows[1] + rows[2])
+
+    def test_same_source_twice_keeps_single_source_output(self):
+        video = {'kind': 'series', 'title': '系列 11', 'oid': 11,
+                 'videos': [{'bvid': 'BV1aaaaaaaaa', 'title': 'A', 'parts': [
+                     {'page': 1, 'part': 'P1', 'duration': 61, 'cid': 1}]}]}
+        data = merge_groups([video, video])
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path, md_path, _ = write_outputs(data, tmp)
+            self.assertEqual(Path(csv_path).name, 'series-11-parts.csv')
+            text = Path(md_path).read_text(encoding='utf-8')
+            self.assertNotIn('## 来源', text)
+            self.assertEqual(text.count('| 1 | BV1aaaaaaaaa |'), 1)
 
     def test_single_video_stamp_unchanged(self):
         data = {'kind': 'video', 'videos': [{'bvid': 'BV1aaaaaaaaa', 'title': 'A', 'parts': [

@@ -1,0 +1,78 @@
+name: release
+
+# 版本号的唯一来源是 bili_planner.py 里的 __version__：
+# 推 main 后这里自动创建 tag 与 GitHub Release，保证代码版本、tag、Release 三者一致。
+# 不要再手工 git tag / gh release create。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      tagged: ${{ steps.read.outputs.tagged }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: read
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import re,pathlib;print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('bili_planner.py').read_text()).group(1))")
+          echo "读到版本号：$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+            changed=$(git diff --name-only "v$version..HEAD" -- bili_planner.py static/ || true)
+            if [ -n "$changed" ]; then
+              echo "::error::产品代码有改动但版本号仍是 $version（tag v$version 已存在）：$changed"
+              exit 1
+            fi
+            echo "v$version 已发布，本次只动文档等非产品文件，跳过发版"
+          else
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m unittest -v test_planner
+      - run: python scripts/check_ui.py
+
+  release:
+    needs: [version, test]
+    if: needs.version.outputs.tagged == 'false'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 打 tag 并发 Release
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
+          if [ -f "release-notes/v$VERSION.md" ]; then
+            gh release create "v$VERSION" --title "v$VERSION" --notes-file "release-notes/v$VERSION.md"
+          else
+            gh release create "v$VERSION" --title "v$VERSION" --generate-notes
+          fi

@@ -25,3 +25,5 @@ jobs:
         run: python -m compileall -q bili_planner.py test_planner.py
       - name: 单元测试
         run: python -m unittest -v test_planner
+      - name: 前端内联脚本语法检查
+        run: python scripts/check_ui.py
