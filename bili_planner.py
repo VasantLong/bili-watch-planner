@@ -30,7 +30,7 @@ DEFAULT_REFERER = "https://www.bilibili.com"
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 CACHE_TTL = 600
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 BV_RE = re.compile(r"BV([0-9A-Za-z]{10})", re.IGNORECASE)
 AV_RE = re.compile(r"\bav(\d+)", re.IGNORECASE)
