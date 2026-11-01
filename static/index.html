@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B站分P观看时长规划</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --line: #2a2f3a;
+    --fg: #e6e9ef; --dim: #98a2b3; --accent: #fb7299; --accent-2: #4f9dff; --ok: #3fbf7f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.55 -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif; }
+  header { padding: 28px 24px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { margin: 0 0 6px; font-size: 20px; font-weight: 650; letter-spacing: .3px; }
+  h1 span { color: var(--accent); }
+  .hint { margin: 0 0 16px; color: var(--dim); font-size: 12.5px; }
+  form { display: flex; gap: 10px; max-width: 1000px; }
+  input[type=text] { flex: 1; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--fg); font-size: 13.5px; outline: none; }
+  input[type=text]:focus { border-color: var(--accent-2); }
+  button { padding: 11px 20px; border-radius: 10px; border: 0; cursor: pointer; font-size: 13.5px;
+    font-weight: 600; background: var(--accent); color: #fff; }
+  button:disabled { opacity: .55; cursor: progress; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); font-weight: 500;
+    padding: 7px 13px; font-size: 12.5px; border-radius: 9px; }
+  button.ghost:hover { color: var(--fg); border-color: var(--dim); }
+  main { padding: 20px 24px 60px; }
+  #status { margin-top: 12px; font-size: 13px; min-height: 20px; color: var(--dim); }
+  #status.error { color: #ff7b8a; }
+  #summary { display: none; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+  #summary.on { display: flex; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 16px; min-width: 118px; }
+  .stat b { display: block; font-size: 18px; font-weight: 650; letter-spacing: .4px; }
+  .stat small { color: var(--dim); font-size: 11.5px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--dim); font-size: 13px;
+    flex-wrap: wrap; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .toolbar .grow { flex: 1; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  thead th { text-align: left; padding: 10px 14px; font-size: 12px; font-weight: 600; color: var(--dim);
+    background: var(--panel-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tbody td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr.video:hover { background: #1b1f28; cursor: pointer; }
+  tbody tr.video.open { background: #1b1f28; }
+  tbody tr.video.unchecked { opacity: .45; }
+  .pick { width: 34px; }
+  input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .idx { color: var(--dim); width: 42px; }
+  .title { font-weight: 500; }
+  .title a { color: var(--fg); text-decoration: none; }
+  .title a:hover { color: var(--accent-2); }
+  .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .dur { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--fg); font-weight: 600; }
+  .dim { color: var(--dim); }
+  .badge { display: inline-block; min-width: 26px; text-align: center; padding: 1px 8px; border-radius: 20px;
+    background: #262b36; color: var(--fg); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .badge.loading { background: transparent; border: 1px dashed var(--line); color: var(--dim); }
+  .badge.err { background: #3a1e24; color: #ff9aa6; }
+  .links { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .links .lbl { color: var(--dim); font-size: 11.5px; margin-right: 2px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; background: #21262f; border: 1px solid var(--line);
+    border-radius: 20px; padding: 1px 4px 1px 9px; font-size: 11.5px; }
+  .chip .txt { color: var(--accent-2); cursor: pointer; font-variant-numeric: tabular-nums; }
+  .chip .txt:hover { text-decoration: underline; }
+  .chip button { background: transparent; border: 0; color: var(--dim); padding: 0 4px; font-size: 12px;
+    cursor: pointer; border-radius: 50%; }
+  .chip button:hover { color: var(--accent); }
+  tr.detail > td { background: #12151b; padding: 0; }
+  .parts { width: 100%; border: 0; border-radius: 0; background: transparent; }
+  .parts td { border-bottom: 1px dashed #232832; padding: 6px 14px; font-size: 13px; }
+  .parts tr:last-child td { border-bottom: 0; }
+  .parts .pno { width: 60px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .parts .pdur { width: 96px; text-align: right; font-variant-numeric: tabular-nums; color: var(--fg); }
+  .parts .plink { width: 44px; text-align: right; }
+  .parts a { color: var(--accent-2); text-decoration: none; font-size: 12px; }
+  .empty { color: var(--dim); padding: 14px; }
+  footer { color: var(--dim); font-size: 12px; padding: 0 24px 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>B站分P观看时长<span>规划</span></h1>
+  <p class="hint">贴 BV 号 / 视频链接，或 UP 主的「系列·合集」链接（如 https://space.bilibili.com/431073645/lists/4495895?type=series ）</p>
+  <form id="form">
+    <input type="text" id="q" autocomplete="off" spellcheck="false"
+           placeholder="BV1BMgj6MEz4　或　https://space.bilibili.com/431073645/lists/4495895?type=series">
+    <button type="submit" id="go">解析</button>
+  </form>
+  <div id="status"></div>
+</header>
+
+<main>
+  <section id="summary"></section>
+  <div class="toolbar" id="toolbar" style="display:none">
+    <label><input type="checkbox" id="hideShort"> 隐藏 &lt; 30 秒的分P</label>
+    <button class="ghost" id="all" type="button">全选</button>
+    <button class="ghost" id="none" type="button">全不选</button>
+    <button class="ghost" id="csv" type="button">导出所选 CSV</button>
+    <span class="grow"></span>
+    <span id="progress"></span>
+  </div>
+  <div id="list"></div>
+</main>
+
+<footer>数据来自 B 站公开接口，仅作个人观看规划参考；分P标题与时长以接口实时返回为准。</footer>
+
+<script>
+"use strict";
+
+var state = {
+  data: null, parts: {}, meta: {}, expanded: {}, selected: {},
+  hideShort: false, loaded: 0, queue: 0, errored: {}, notice: ""
+};
+var el = function (id) { return document.getElementById(id); };
+
+function hms(sec) {
+  var s = Math.round(sec || 0);
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return h + ":" + String(m).padStart(2, "0") + ":" + String(r).padStart(2, "0");
+}
+
+var BV_OK = /^BV[0-9A-Za-z]{10}$/;
+var NUM_OK = /^[0-9]+$/;
+var SHORT_OK = /^https?:\/\/b23\.tv\/([0-9A-Za-z]{4,16})$/;
+
+// 打开接口给的链接前，只按白名单部件重新拼 URL，绝不直接跳原始字符串
+function biliTarget(item) {
+  if (!item || typeof item !== "object") return null;
+  if (item.kind === "video" && BV_OK.test(String(item.bvid || ""))) {
+    return "https://www.bilibili.com/video/" + item.bvid;
+  }
+  if (item.kind === "video" && NUM_OK.test(String(item.aid || ""))) {
+    return "https://www.bilibili.com/video/av" + Number(item.aid);
+  }
+  if ((item.kind === "series" || item.kind === "season")
+      && NUM_OK.test(String(item.mid || "")) && NUM_OK.test(String(item.oid || ""))) {
+    return "https://space.bilibili.com/" + Number(item.mid) + "/lists/" + Number(item.oid)
+      + "?type=" + (item.kind === "season" ? "season" : "series");
+  }
+  var m = SHORT_OK.exec(String(item.url || ""));
+  return m ? "https://b23.tv/" + m[1] : null;
+}
+
+function openLink(url) {
+  var a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function setStatus(text, isError) {
+  var node = el("status");
+  node.textContent = text || "";
+  node.className = isError ? "error" : "";
+}
+
+function visibleParts(bvid) {
+  var parts = state.parts[bvid];
+  if (!parts) return [];
+  return state.hideShort ? parts.filter(function (p) { return p.duration >= 30; }) : parts;
+}
+function sumDuration(parts) {
+  var total = 0;
+  for (var i = 0; i < parts.length; i++) total += parts[i].duration || 0;
+  return total;
+}
+function videos() { return (state.data && state.data.videos) || []; }
+function isPicked(bvid) { return state.selected[bvid] !== false; }
+function pickedVideos() { return videos().filter(function (v) { return isPicked(v.bvid); }); }
+
+function resetState(query) {
+  state = {
+    data: null, parts: {}, meta: {}, expanded: {}, selected: {},
+    hideShort: el("hideShort").checked, loaded: 0, queue: 0, errored: {}, notice: ""
+  };
+  el("list").innerHTML = "";
+  el("summary").className = "";
+  el("toolbar").style.display = "none";
+}
+
+function startResolve(query) {
+  if (!query) return;
+  setStatus("解析中…");
+  el("go").disabled = true;
+  resetState(query);
+
+  fetch("/api/resolve?url=" + encodeURIComponent(query)).then(function (resp) {
+    return resp.json();
+  }).then(function (payload) {
+    if (!payload.ok) throw new Error(payload.error || "解析失败");
+    state.data = payload.data;
+    bootstrapParts();
+    render();
+    loadPartsQueue();
+    setStatus("已解析：" + payload.data.title);
+  }).catch(function (err) {
+    setStatus(err.message, true);
+  }).finally(function () {
+    el("go").disabled = false;
+  });
+}
+
+function bootstrapParts() {
+  state.queue = [];
+  videos().forEach(function (v) {
+    if (v.parts && v.parts.length) {
+      state.parts[v.bvid] = v.parts;
+      if (v.links) state.meta[v.bvid] = { links: v.links, desc: v.desc };
+      if (v.links && v.links.length) state.meta[v.bvid] = { links: v.links, desc: v.desc };
+      state.loaded++;
+    } else {
+      state.queue.push(v.bvid);
+    }
+  });
+}
+
+function loadPartsQueue() {
+  var CONCURRENCY = 3;
+  var running = 0;
+  function pump() {
+    while (running < CONCURRENCY && state.queue.length) {
+      var bvid = state.queue.shift();
+      running++;
+      fetchParts(bvid).finally(function () {
+        running--;
+        pump();
+      });
+    }
+  }
+  pump();
+  updateProgress();
+}
+
+function fetchParts(bvid) {
+  return fetch("/api/parts?bvid=" + encodeURIComponent(bvid))
+    .then(function (resp) { return resp.json(); })
+    .then(function (payload) {
+      if (!payload.ok) throw new Error(payload.error || "fail");
+      state.parts[bvid] = payload.parts;
+      if (payload.meta) state.meta[bvid] = payload.meta;
+    })
+    .catch(function () {
+      state.parts[bvid] = [];
+      state.errored[bvid] = true;
+    })
+    .finally(function () {
+      state.loaded++;
+      render();
+      updateProgress();
+    });
+}
+
+function updateProgress() {
+  var all = videos();
+  var node = el("progress");
+  if (!all.length) { node.textContent = ""; return; }
+  node.textContent = state.queue.length || state.loaded < all.length
+    ? "分P加载中 " + state.loaded + "/" + all.length
+    : "分P已全部加载（" + all.length + " 个视频）";
+}
+
+function render() {
+  if (!state.data) return;
+  renderSummary();
+  renderTable();
+  el("toolbar").style.display = "flex";
+}
+
+function renderSummary() {
+  var all = videos();
+  var chosen = pickedVideos();
+  var partsCount = 0, durCount = 0, loadedChosen = 0;
+  chosen.forEach(function (v) {
+    var parts = state.parts[v.bvid];
+    if (!parts) return;
+    loadedChosen++;
+    var vis = visibleParts(v.bvid);
+    partsCount += vis.length;
+    durCount += sumDuration(vis);
+  });
+  var box = el("summary");
+  box.className = "on";
+  box.innerHTML = "";
+  var stats = [
+    ["已选视频", chosen.length + " / " + all.length, state.data.title || ""],
+    ["分P", String(partsCount), "已加载 " + loadedChosen + "/" + chosen.length],
+    ["总时长", hms(durCount), durCount ? (durCount / 3600).toFixed(2) + " 小时" : "-"],
+    ["平均每P", partsCount ? hms(durCount / partsCount) : "-", "按当前筛选"]
+  ];
+  stats.forEach(function (item) {
+    var card = document.createElement("div");
+    card.className = "stat";
+    var b = document.createElement("b");
+    b.textContent = item[1];
+    var small = document.createElement("small");
+    small.textContent = item[0] + " · " + item[2];
+    card.appendChild(b);
+    card.appendChild(small);
+    box.appendChild(card);
+  });
+}
+
+function buildLinksRow(video) {
+  var meta = state.meta[video.bvid] || (video.links ? { links: video.links } : null);
+  var links = (meta && meta.links) || [];
+  if (!links.length) return null;
+  var row = document.createElement("div");
+  row.className = "links";
+  var lbl = document.createElement("span");
+  lbl.className = "lbl";
+  lbl.textContent = "简介提到 " + links.length + " 条";
+  row.appendChild(lbl);
+  links.forEach(function (item) {
+    var chip = document.createElement("span");
+    chip.className = "chip";
+    var text = document.createElement("span");
+    text.className = "txt";
+    text.textContent = item.label || item.url;
+    text.title = "在 B 站打开 " + (item.url || "");
+    text.addEventListener("click", function (event) {
+      event.stopPropagation();
+      var safe = biliTarget(item);
+      if (safe) openLink(safe);
+    });
+    chip.appendChild(text);
+    if (item.kind === "video" && item.bvid) {
+      var add = document.createElement("button");
+      add.type = "button";
+      add.textContent = "＋";
+      add.title = "把这个视频加入列表（一起算时长 / 导出）";
+      add.addEventListener("click", function (event) {
+        event.stopPropagation();
+        addVideo(item);
+      });
+      chip.appendChild(add);
+    }
+    row.appendChild(chip);
+  });
+  return row;
+}
+
+function addVideo(item) {
+  var exists = videos().some(function (v) { return v.bvid === item.bvid; });
+  if (exists) {
+    state.notice = item.bvid + " 已在列表里";
+    setStatus(state.notice);
+    return;
+  }
+  var stub = { bvid: item.bvid, title: item.label || item.bvid, parts: null, from: "简介" };
+  state.data.videos.push(stub);
+  state.selected[item.bvid] = true;
+  state.loaded++;
+  render();
+  setStatus("正在加入 " + item.bvid + " …");
+  fetch("/api/parts?bvid=" + encodeURIComponent(item.bvid))
+    .then(function (resp) { return resp.json(); })
+    .then(function (payload) {
+      if (!payload.ok) throw new Error(payload.error || "fail");
+      state.parts[item.bvid] = payload.parts;
+      if (payload.meta) {
+        state.meta[item.bvid] = payload.meta;
+        if (payload.meta.title) stub.title = payload.meta.title;
+        if (payload.meta.owner) stub.owner = payload.meta.owner;
+      }
+      setStatus("已加入 " + item.bvid + "（" + payload.parts.length + " P）");
+    })
+    .catch(function (err) {
+      state.parts[item.bvid] = [];
+      state.errored[item.bvid] = true;
+      setStatus("加入失败：" + err.message, true);
+    })
+    .finally(function () {
+      render();
+      updateProgress();
+    });
+}
+
+function renderTable() {
+  var all = videos();
+  var host = el("list");
+  host.innerHTML = "";
+  if (!all.length) {
+    var empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "没有解析到视频";
+    host.appendChild(empty);
+    return;
+  }
+  var table = document.createElement("table");
+  var thead = document.createElement("thead");
+  var headRow = document.createElement("tr");
+  var pickTh = document.createElement("th");
+  pickTh.className = "pick";
+  var allInput = document.createElement("input");
+  allInput.type = "checkbox";
+  allInput.id = "pickAll";
+  allInput.title = "全选 / 全不选";
+  pickTh.appendChild(allInput);
+  headRow.appendChild(pickTh);
+  ["#", "视频标题", "分P", "时长", ""].forEach(function (label) {
+    var th = document.createElement("th");
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  var tbody = document.createElement("tbody");
+
+  all.forEach(function (v, index) {
+    var parts = state.parts[v.bvid];
+    var loaded = !!parts;
+    var vis = visibleParts(v.bvid);
+    var dur = loaded ? sumDuration(vis) : (v.duration || 0);
+    var picked = isPicked(v.bvid);
+
+    var tr = document.createElement("tr");
+    tr.className = "video" + (picked ? "" : " unchecked");
+    tr.dataset.bvid = v.bvid;
+
+    var cellPick = document.createElement("td");
+    cellPick.className = "pick";
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = picked;
+    box.title = "勾选后才计入汇总 / 导出";
+    box.addEventListener("click", function (event) { event.stopPropagation(); });
+    box.addEventListener("change", function (event) {
+      state.selected[v.bvid] = event.target.checked;
+      render();
+    });
+    cellPick.appendChild(box);
+    tr.appendChild(cellPick);
+
+    var td0 = document.createElement("td");
+    td0.className = "idx";
+    td0.textContent = String(index + 1);
+    tr.appendChild(td0);
+
+    var td1 = document.createElement("td");
+    td1.className = "title";
+    var link = document.createElement("a");
+    link.href = v.url || ("https://www.bilibili.com/video/" + v.bvid);
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = v.title || v.bvid;
+    td1.appendChild(link);
+    td1.appendChild(document.createElement("br"));
+    var sub = document.createElement("span");
+    sub.className = "dim";
+    sub.style.fontSize = "12px";
+    sub.textContent = v.bvid + (v.owner ? " · " + v.owner : "") + (v.from ? " · 来自" + v.from : "");
+    td1.appendChild(sub);
+    var linksRow = buildLinksRow(v);
+    if (linksRow) td1.appendChild(linksRow);
+    tr.appendChild(td1);
+
+    var td2 = document.createElement("td");
+    var badge = document.createElement("span");
+    badge.className = "badge" + (loaded ? "" : " loading");
+    if (loaded && state.errored[v.bvid]) {
+      badge.className = "badge err";
+      badge.textContent = "失败";
+    } else {
+      badge.textContent = loaded ? String(vis.length) : "…";
+    }
+    td2.appendChild(badge);
+    tr.appendChild(td2);
+
+    var td3 = document.createElement("td");
+    td3.className = "dur";
+    td3.textContent = loaded ? hms(dur) : "…";
+    tr.appendChild(td3);
+
+    var td4 = document.createElement("td");
+    td4.className = "num dim";
+    td4.style.fontSize = "12px";
+    td4.textContent = state.expanded[v.bvid] ? "收起 ▾" : "展开 ▸";
+    tr.appendChild(td4);
+
+    tbody.appendChild(tr);
+
+    if (state.expanded[v.bvid]) {
+      var detail = document.createElement("tr");
+      detail.className = "detail";
+      var cell = document.createElement("td");
+      cell.colSpan = 6;
+      cell.appendChild(buildPartsTable(v, loaded ? vis : []));
+      detail.appendChild(cell);
+      tbody.appendChild(detail);
+    }
+
+    tr.addEventListener("click", function (event) {
+      if (event.target.tagName === "A" || event.target.tagName === "BUTTON") return;
+      if (event.target.tagName === "INPUT") return;
+      state.expanded[v.bvid] = !state.expanded[v.bvid];
+      renderTable();
+    });
+  });
+
+  table.appendChild(tbody);
+  host.appendChild(table);
+
+  var allBox = el("pickAll");
+  var picked = pickedVideos().length;
+  allBox.checked = picked === all.length;
+  allBox.indeterminate = picked > 0 && picked < all.length;
+  allBox.addEventListener("change", function (event) {
+    var on = event.target.checked;
+    videos().forEach(function (v) { state.selected[v.bvid] = on; });
+    render();
+  });
+}
+
+function buildPartsTable(video, parts) {
+  var wrap = document.createElement("table");
+  wrap.className = "parts";
+  if (!parts.length) {
+    var emptyRow = document.createElement("tr");
+    var emptyCell = document.createElement("td");
+    emptyCell.className = "empty";
+    emptyCell.colSpan = 4;
+    emptyCell.textContent = state.parts[video.bvid] ? "无分P数据" : "分P加载中…";
+    emptyRow.appendChild(emptyCell);
+    wrap.appendChild(emptyRow);
+    return wrap;
+  }
+  parts.forEach(function (part) {
+    var tr = document.createElement("tr");
+
+    var pno = document.createElement("td");
+    pno.className = "pno";
+    pno.textContent = "P" + part.page;
+    tr.appendChild(pno);
+
+    var ptitle = document.createElement("td");
+    ptitle.textContent = part.part;
+    tr.appendChild(ptitle);
+
+    var pdur = document.createElement("td");
+    pdur.className = "pdur";
+    pdur.textContent = hms(part.duration);
+    tr.appendChild(pdur);
+
+    var plink = document.createElement("td");
+    plink.className = "plink";
+    var a = document.createElement("a");
+    a.href = "https://www.bilibili.com/video/" + video.bvid + "?p=" + part.page;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    a.textContent = "打开";
+    plink.appendChild(a);
+    tr.appendChild(plink);
+
+    wrap.appendChild(tr);
+  });
+  return wrap;
+}
+
+function exportCsv() {
+  if (!state.data) return;
+  var chosen = pickedVideos();
+  if (!chosen.length) { setStatus("没有勾选任何视频", true); return; }
+  var lines = ["bvid,video_title,page,part_title,duration_s,duration_hms,source,url"];
+  function esc(value) { return '"' + String(value == null ? "" : value).replace(/"/g, '""') + '"'; }
+  chosen.forEach(function (v) {
+    visibleParts(v.bvid).forEach(function (p) {
+      lines.push([
+        esc(v.bvid), esc(v.title), p.page, esc(p.part), p.duration, esc(hms(p.duration)),
+        esc(v.from || ""),
+        esc("https://www.bilibili.com/video/" + v.bvid + "?p=" + p.page)
+      ].join(","));
+    });
+  });
+  var stamp = state.data.oid || (chosen.length === 1 ? chosen[0].bvid : "bili");
+  var blob = new Blob([String.fromCharCode(65279) + lines.join(String.fromCharCode(10))], { type: "text/csv;charset=utf-8" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = stamp + "-selected-" + chosen.length + "videos.csv";
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+  setStatus("已导出 " + chosen.length + " 个视频、共 " + (lines.length - 1) + " 行");
+}
+
+el("form").addEventListener("submit", function (event) {
+  event.preventDefault();
+  startResolve(el("q").value.trim());
+});
+el("hideShort").addEventListener("change", function (event) {
+  state.hideShort = event.target.checked;
+  render();
+});
+el("csv").addEventListener("click", exportCsv);
+el("all").addEventListener("click", function () {
+  videos().forEach(function (v) { state.selected[v.bvid] = true; });
+  render();
+});
+el("none").addEventListener("click", function () {
+  videos().forEach(function (v) { state.selected[v.bvid] = false; });
+  render();
+});
+
+var preset = new URLSearchParams(location.search).get("url");
+if (preset) { el("q").value = preset; startResolve(preset); }
+</script>
+</body>
+</html>
