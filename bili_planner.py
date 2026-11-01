@@ -30,7 +30,7 @@ DEFAULT_REFERER = "https://www.bilibili.com"
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 CACHE_TTL = 600
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 BV_RE = re.compile(r"BV([0-9A-Za-z]{10})", re.IGNORECASE)
 AV_RE = re.compile(r"\bav(\d+)", re.IGNORECASE)
@@ -193,6 +193,66 @@ def aggregate(videos):
     return {"videos": len(videos), "parts_total": parts_total,
             "duration_total": duration_total, "videos_with_parts": with_parts,
             "videos_pending": pending}
+
+
+def source_label(data):
+    """给一个来源起稳定短标签：CSV 的 source 列、前端的来源条都用它。"""
+    videos = data.get("videos") or []
+    if data.get("kind") == "video" and videos:
+        return "video-" + str(videos[0].get("bvid") or "?")
+    if data.get("kind") in ("series", "season") and data.get("oid") is not None:
+        return "%s-%s" % (data["kind"], data["oid"])
+    return str(data.get("kind") or "list")
+
+
+def merge_groups(groups):
+    """把多个解析结果合并成一份统一记录：按 bvid 去重，先到先得、缺的分P可回填。
+
+    单个来源保持原结构（kind/oid 不变）；多个来源 kind='merged'。
+    每个稿件带 from（首次出现的来源标签）与 referer（该来源的 Referer）。
+    """
+    groups = [g for g in groups if isinstance(g, dict)]
+    videos = []
+    index = {}
+    sources = []
+    for data in groups:
+        label = source_label(data)
+        batch = data.get("videos") or []
+        referer = data.get("source") or data.get("url")
+        sources.append({"label": label, "kind": data.get("kind"),
+                        "title": data.get("title"), "count": len(batch),
+                        "url": data.get("url") or referer})
+        for video in batch:
+            key = str(video.get("bvid") or "").upper()
+            if not key:
+                continue
+            if key in index:
+                held = index[key]
+                if not held.get("parts") and video.get("parts"):
+                    held["parts"] = video["parts"]
+                for field in ("links", "desc", "owner", "error"):
+                    if not held.get(field) and video.get(field):
+                        held[field] = video[field]
+                held.setdefault("also_in", []).append(label)
+                continue
+            item = dict(video)
+            item["from"] = label
+            if not item.get("parts"):
+                item["parts"] = None
+            if referer:
+                item["referer"] = referer
+            index[key] = item
+            videos.append(item)
+    if not groups:
+        return {"kind": "merged", "title": "没有来源", "videos": [], "sources": []}
+    if len(groups) == 1:
+        merged = dict(groups[0])
+        merged["videos"] = videos
+        merged["sources"] = sources
+        return merged
+    return {"kind": "merged", "title": "合并 %d 个来源" % len(groups),
+            "videos": videos, "sources": sources,
+            "source": groups[0].get("source") or groups[0].get("url")}
 
 
 # --------------------------------------------------------------------------- #
@@ -454,8 +514,11 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path in ("/", "/index.html"):
                 return self._serve_file(STATIC_DIR / "index.html")
             if parsed.path == "/api/resolve":
-                target = (query.get("url") or [""])[0]
-                return self._json({"ok": True, "data": cached_resolve(target)})
+                targets = [u.strip() for u in (query.get("url") or []) if u.strip()]
+                if not targets:
+                    return self._json({"ok": False, "error": "缺少 url 参数"}, 400)
+                data = merge_groups([cached_resolve(u) for u in targets])
+                return self._json({"ok": True, "data": data})
             if parsed.path == "/api/parts":
                 bvid = (query.get("bvid") or [""])[0]
                 if not re.fullmatch(r"BV[0-9A-Za-z]{10}", bvid):
@@ -506,7 +569,7 @@ def _load_one(bvid, referer, with_meta):
 
 
 def load_all_parts(data, workers=4, delay=0.0, with_meta=True):
-    referer = data.get("source") or DEFAULT_REFERER
+    fallback = data.get("source") or DEFAULT_REFERER
     pending = [v for v in data["videos"] if not v.get("parts")]
     if not pending:
         return data
@@ -515,6 +578,7 @@ def load_all_parts(data, workers=4, delay=0.0, with_meta=True):
         for video in pending:
             if delay:
                 time.sleep(delay)
+            referer = video.get("referer") or fallback
             futures[pool.submit(_load_one, video["bvid"], referer, with_meta)] = video
         for future in as_completed(futures):
             video = futures[future]
@@ -537,6 +601,8 @@ def write_outputs(data, out_dir):
     out.mkdir(parents=True, exist_ok=True)
     if data.get("kind") == "video" and data["videos"]:
         stamp = data["videos"][0]["bvid"]
+    elif data.get("kind") == "merged":
+        stamp = "merged-%dsrc" % len(data.get("sources") or [])
     else:
         stamp = "%s-%s" % (data.get("kind", "list"), data.get("oid") or "list")
     rows = []
@@ -545,12 +611,13 @@ def write_outputs(data, out_dir):
             rows.append({"bvid": video["bvid"], "video_title": video.get("title"),
                          "page": part["page"], "part_title": part["part"],
                          "duration_s": part["duration"], "duration_hms": hms(part["duration"]),
-                         "cid": part["cid"]})
+                         "cid": part["cid"],
+                         "source": video.get("from") or data.get("kind")})
     csv_path = out / (stamp + "-parts.csv")
     try:
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=["bvid", "video_title", "page", "part_title",
-                                                        "duration_s", "duration_hms", "cid"])
+                                                        "duration_s", "duration_hms", "cid", "source"])
             writer.writeheader()
             writer.writerows(rows)
     except OSError as exc:
@@ -582,11 +649,17 @@ def write_outputs(data, out_dir):
              "- 1.25x %s ｜ 1.5x %s ｜ 2x %s" % (
                  hms(agg["duration_total"] / 1.25), hms(agg["duration_total"] / 1.5),
                  hms(agg["duration_total"] / 2)), "",
-             "| # | BV | 分P | 时长 | 标题 |", "|---|---|---|---|---|"]
+             "| # | BV | 分P | 时长 | 来源 | 标题 |", "|---|---|---|---|---|---|"]
     for idx, video in enumerate(data["videos"], 1):
         dur = sum(p["duration"] for p in video.get("parts") or [])
-        lines.append("| %d | %s | %d | %s | %s |" % (
-            idx, video["bvid"], len(video.get("parts") or []), hms(dur), video.get("title")))
+        lines.append("| %d | %s | %d | %s | %s | %s |" % (
+            idx, video["bvid"], len(video.get("parts") or []), hms(dur),
+            video.get("from") or "", video.get("title")))
+    if data.get("sources") and len(data["sources"]) > 1:
+        lines += ["", "## 来源", "", "| 标签 | 类型 | 数量 | 标题 |", "|---|---|---|---|"]
+        for src in data["sources"]:
+            lines.append("| %s | %s | %d | %s |" % (src.get("label"), src.get("kind"),
+                                                    src.get("count") or 0, src.get("title")))
     if link_rows:
         lines += ["", "## 简介 / 分P标题里提到的其他 B 站链接", "",
                   "| 来源视频 | 类型 | 链接 |", "|---|---|---|"]
@@ -600,8 +673,16 @@ def write_outputs(data, out_dir):
     return csv_path, md_path, links_path
 
 
-def run_cli(raw, out_dir, workers, delay, as_json, with_meta=True):
-    data = load_all_parts(resolve(raw), workers=workers, delay=delay, with_meta=with_meta)
+def run_cli(sources, out_dir, workers, delay, as_json, with_meta=True, with_parts=True):
+    if isinstance(sources, str):
+        sources = [sources]
+    groups = [cached_resolve(raw) for raw in sources]
+    data = merge_groups(groups)
+    if with_parts:
+        data = load_all_parts(data, workers=workers, delay=delay, with_meta=with_meta)
+    else:
+        for video in data["videos"]:
+            video["parts"] = []
     if not with_meta:
         for video in data["videos"]:
             video.setdefault("links", [])
@@ -609,6 +690,10 @@ def run_cli(raw, out_dir, workers, delay, as_json, with_meta=True):
         print(json.dumps(data, ensure_ascii=False, indent=2))
     agg = aggregate(data["videos"])
     print("%s  [%s]" % (data.get("title"), data.get("kind")))
+    if len(sources) > 1:
+        for src in data.get("sources") or []:
+            print("  来源 %-22s %4d 稿  %s" % (src.get("label"), src.get("count") or 0,
+                                              src.get("title")))
     print("%-13s %3s %11s  %s" % ("BV", "P", "时长", "标题"))
     for video in data["videos"]:
         dur = sum(p["duration"] for p in video.get("parts") or [])
@@ -634,7 +719,8 @@ def run_cli(raw, out_dir, workers, delay, as_json, with_meta=True):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="B站分P观看时长规划")
-    parser.add_argument("url", nargs="?", help="BV 号 / 视频链接 / 系列或合集链接；不填则启动网页")
+    parser.add_argument("sources", nargs="*", metavar="URL",
+                        help="BV 号 / 视频链接 / 系列或合集链接，可给多个并合并；不填则启动网页")
     parser.add_argument("--version", action="version", version="bili-planner " + __version__)
     parser.add_argument("--port", type=int, default=8770)
     parser.add_argument("--host", default="127.0.0.1")
@@ -644,12 +730,14 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="终端模式额外打印原始 JSON")
     parser.add_argument("--no-desc", action="store_true",
                         help="不抓稿件简介（省一半请求，跳过简介链接提取）")
+    parser.add_argument("--no-parts", action="store_true",
+                        help="只出稿件级汇总，不逐稿抓分P（大合集秒回）")
     args = parser.parse_args(argv)
-    if not args.url:
+    if not args.sources:
         return serve(args.host, args.port)
     try:
-        run_cli(args.url, args.out, args.workers, args.delay, args.json,
-                with_meta=not args.no_desc)
+        run_cli(args.sources, args.out, args.workers, args.delay, args.json,
+                with_meta=not args.no_desc, with_parts=not args.no_parts)
     except UnsupportedInput as exc:
         print("输入有误: " + str(exc), file=sys.stderr)
         return 2

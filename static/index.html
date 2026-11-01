@@ -78,6 +78,14 @@
   .parts .plink { width: 44px; text-align: right; }
   .parts a { color: var(--accent-2); text-decoration: none; font-size: 12px; }
   .empty { color: var(--dim); padding: 14px; }
+  .append { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px;
+    cursor: pointer; white-space: nowrap; padding: 0 4px; }
+  .append input { accent-color: var(--accent); }
+  .sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 14px;
+    font-size: 12px; color: var(--dim); }
+  .sources .src { background: var(--panel-2); border: 1px solid var(--line); border-radius: 20px;
+    padding: 2px 10px; color: var(--fg); }
+  .sources .src b { font-weight: 600; color: var(--accent-2); }
   footer { color: var(--dim); font-size: 12px; padding: 0 24px 40px; }
 </style>
 </head>
@@ -89,8 +97,10 @@
     <input type="text" id="q" autocomplete="off" spellcheck="false"
            placeholder="BV1BMgj6MEz4　或　https://space.bilibili.com/431073645/lists/4495895?type=series">
     <button type="submit" id="go">解析</button>
+    <label class="append"><input type="checkbox" id="append"> 追加到当前列表</label>
   </form>
   <div id="status"></div>
+  <div id="sources" class="sources"></div>
 </header>
 
 <main>
@@ -112,8 +122,8 @@
 "use strict";
 
 var state = {
-  data: null, parts: {}, meta: {}, expanded: {}, selected: {},
-  hideShort: false, loaded: 0, queue: 0, errored: {}, notice: ""
+  data: null, parts: {}, meta: {}, expanded: {}, selected: {}, sources: [],
+  hideShort: false, loaded: 0, queue: [], errored: {}, notice: ""
 };
 var el = function (id) { return document.getElementById(id); };
 
@@ -178,29 +188,103 @@ function pickedVideos() { return videos().filter(function (v) { return isPicked(
 
 function resetState(query) {
   state = {
-    data: null, parts: {}, meta: {}, expanded: {}, selected: {},
-    hideShort: el("hideShort").checked, loaded: 0, queue: 0, errored: {}, notice: ""
+    data: null, parts: {}, meta: {}, expanded: {}, selected: {}, sources: [],
+    hideShort: el("hideShort").checked, loaded: 0, queue: [], errored: {}, notice: ""
   };
   el("list").innerHTML = "";
   el("summary").className = "";
   el("toolbar").style.display = "none";
+  el("sources").innerHTML = "";
 }
 
-function startResolve(query) {
+function sourceLabel(data) {
+  if (!data) return "list";
+  var vids = data.videos || [];
+  if (data.kind === "video" && vids.length) return "video-" + vids[0].bvid;
+  if ((data.kind === "series" || data.kind === "season") && data.oid != null) {
+    return data.kind + "-" + data.oid;
+  }
+  return String(data.kind || "list");
+}
+
+function renderSources() {
+  var host = el("sources");
+  host.innerHTML = "";
+  if (!state.sources || state.sources.length < 2) return;
+  var lbl = document.createElement("span");
+  lbl.textContent = "来源 " + state.sources.length + " 个：";
+  host.appendChild(lbl);
+  state.sources.forEach(function (src) {
+    var tag = document.createElement("span");
+    tag.className = "src";
+    tag.title = src.title || "";
+    var b = document.createElement("b");
+    b.textContent = src.label || "?";
+    tag.appendChild(b);
+    tag.appendChild(document.createTextNode(" " + (src.count || 0)));
+    host.appendChild(tag);
+  });
+}
+
+// 把新来源的稿件并入现有列表：按 bvid 去重，新加的默认勾选并排队抓分P
+function mergeIncoming(data, label) {
+  var incoming = (data.videos || []).map(function (v) {
+    var copy = {};
+    Object.keys(v).forEach(function (k) { copy[k] = v[k]; });
+    copy.from = label;
+    return copy;
+  });
+  var added = 0, dupe = 0;
+  incoming.forEach(function (v) {
+    var exists = videos().some(function (x) { return x.bvid === v.bvid; });
+    if (exists) { dupe++; return; }
+    state.data.videos.push(v);
+    state.selected[v.bvid] = true;
+    if (!v.parts || !v.parts.length) state.queue.push(v.bvid);
+    else state.parts[v.bvid] = v.parts;
+    added++;
+  });
+  state.sources = (state.sources || []).concat([{
+    label: label, kind: data.kind, title: data.title,
+    count: (data.videos || []).length, url: data.url
+  }]);
+  if (state.data.kind !== "merged") state.data.kind = "merged";
+  state.data.title = "合并 " + state.sources.length + " 个来源";
+  return { added: added, dupe: dupe };
+}
+
+function startResolve(query, append) {
   if (!query) return;
-  setStatus("解析中…");
+  var keep = !!append && !!state.data;
+  setStatus(keep ? "追加重：" : "解析中…");
   el("go").disabled = true;
-  resetState(query);
+  if (!keep) resetState(query);
 
   fetch("/api/resolve?url=" + encodeURIComponent(query)).then(function (resp) {
     return resp.json();
   }).then(function (payload) {
     if (!payload.ok) throw new Error(payload.error || "解析失败");
-    state.data = payload.data;
-    bootstrapParts();
-    render();
-    loadPartsQueue();
-    setStatus("已解析：" + payload.data.title);
+    var label = sourceLabel(payload.data);
+    if (keep) {
+      var res = mergeIncoming(payload.data, label);
+      render();
+      renderSources();
+      loadPartsQueue();
+      updateProgress();
+      setStatus("已追加 " + res.added + " 个视频"
+        + (res.dupe ? "（跳过 " + res.dupe + " 个重复）" : "")
+        + "，现有 " + videos().length + " 个" + (res.added || !res.dupe ? "" : "：该来源已在列表里"));
+    } else {
+      state.data = payload.data;
+      state.sources = [{ label: label, kind: payload.data.kind, title: payload.data.title,
+                         count: (payload.data.videos || []).length, url: payload.data.url }];
+      (payload.data.videos || []).forEach(function (v) { v.from = label; });
+      bootstrapParts();
+      render();
+      renderSources();
+      loadPartsQueue();
+      setStatus("已解析：" + payload.data.title);
+    }
   }).catch(function (err) {
     setStatus(err.message, true);
   }).finally(function () {
@@ -579,7 +663,9 @@ function exportCsv() {
       ].join(","));
     });
   });
-  var stamp = state.data.oid || (chosen.length === 1 ? chosen[0].bvid : "bili");
+  var stamp = state.data.oid || "bili";
+  if (chosen.length === 1 && !state.data.oid) stamp = chosen[0].bvid;
+  if (state.sources && state.sources.length > 1) stamp = "merged-" + state.sources.length + "src";
   var blob = new Blob([String.fromCharCode(65279) + lines.join(String.fromCharCode(10))], { type: "text/csv;charset=utf-8" });
   var a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -590,8 +676,8 @@ function exportCsv() {
 }
 
 el("form").addEventListener("submit", function (event) {
-  event.preventDefault();
-  startResolve(el("q").value.trim());
+event.preventDefault();
+startResolve(el("q").value.trim(), el("append").checked);
 });
 el("hideShort").addEventListener("change", function (event) {
   state.hideShort = event.target.checked;

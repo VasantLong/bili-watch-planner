@@ -1,6 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from bili_planner import UnsupportedInput, aggregate, extract_bili_links, hms, parse_target
+from bili_planner import (UnsupportedInput, aggregate, extract_bili_links, hms, merge_groups,
+                          parse_target, write_outputs)
 
 
 class TestParseTarget(unittest.TestCase):
@@ -107,6 +110,83 @@ class TestExtractLinks(unittest.TestCase):
         links = extract_bili_links('', None, 'BV1BMgj6MEz4', 'BV1L8xH6pEhr')
         self.assertEqual(len(links), 2)
         self.assertEqual(extract_bili_links(), [])
+
+class TestMergeGroups(unittest.TestCase):
+    """增量解析：多个来源合并成一份统一记录。"""
+
+    @staticmethod
+    def _series(oid, bvids, parts=None):
+        return {'kind': 'series', 'title': '系列 %d' % oid, 'oid': oid,
+                'videos': [{'bvid': b, 'title': b, 'parts': None} for b in bvids]}
+
+    @staticmethod
+    def _video(bvid, parts=None):
+        return {'kind': 'video', 'title': bvid, 'videos': [{'bvid': bvid, 'title': bvid,
+                                                            'parts': parts}]}
+
+    def test_single_group_keeps_its_shape(self):
+        merged = merge_groups([self._series(11, ['BV1aaaaaaaaa'])])
+        self.assertEqual(merged['kind'], 'series')
+        self.assertEqual(merged['oid'], 11)
+        self.assertEqual(merged['sources'][0]['label'], 'series-11')
+        self.assertEqual(merged['videos'][0]['from'], 'series-11')
+
+    def test_multi_group_is_merged_and_deduped(self):
+        merged = merge_groups([self._series(11, ['BV1aaaaaaaaa', 'BV1bbbbbbbbb']),
+                               self._video('BV1bbbbbbbbb'),
+                               self._video('BV1ccccccccc')])
+        self.assertEqual(merged['kind'], 'merged')
+        self.assertEqual([v['bvid'] for v in merged['videos']],
+                         ['BV1aaaaaaaaa', 'BV1bbbbbbbbb', 'BV1ccccccccc'])
+        self.assertEqual(len(merged['sources']), 3)
+
+    def test_duplicate_records_also_in(self):
+        merged = merge_groups([self._series(11, ['BV1aaaaaaaaa']),
+                               self._video('BV1aaaaaaaaa')])
+        self.assertEqual(merged['videos'][0]['also_in'], ['video-BV1aaaaaaaaa'])
+
+    def test_duplicate_fills_missing_parts(self):
+        first = self._series(11, ['BV1aaaaaaaaa'])
+        second = self._video('BV1aaaaaaaaa', parts=[{'page': 1, 'part': 'P1',
+                                                     'duration': 60, 'cid': 1}])
+        merged = merge_groups([first, second])
+        self.assertEqual(len(merged['videos']), 1)
+        self.assertEqual(merged['videos'][0]['parts'][0]['duration'], 60)
+
+    def test_merged_videos_have_parts_default(self):
+        merged = merge_groups([self._series(11, ['BV1aaaaaaaaa']), self._video('BV1ccccccccc')])
+        for video in merged['videos']:
+            self.assertIn('parts', video)
+
+    def test_empty_groups(self):
+        self.assertEqual(merge_groups([])['videos'], [])
+
+
+class TestWriteMerged(unittest.TestCase):
+    def test_stamp_and_source_column(self):
+        data = merge_groups([
+            {'kind': 'series', 'title': '系列 11', 'oid': 11,
+             'videos': [{'bvid': 'BV1aaaaaaaaa', 'title': 'A', 'parts': [
+                 {'page': 1, 'part': 'P1', 'duration': 61, 'cid': 1}]}]},
+            {'kind': 'video', 'title': 'B', 'videos': [{
+                'bvid': 'BV1bbbbbbbbb', 'title': 'B', 'parts': [
+                    {'page': 1, 'part': 'Q1', 'duration': 30, 'cid': 2}]}]},
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path, md_path, _ = write_outputs(data, tmp)
+            self.assertEqual(Path(csv_path).name, 'merged-2src-parts.csv')
+            self.assertTrue(Path(md_path).exists())
+            rows = Path(csv_path).read_text(encoding='utf-8-sig').splitlines()
+            self.assertIn('source', rows[0].split(','))
+            self.assertIn('series-11', rows[1] + rows[2])
+            self.assertIn('video-BV1bbbbbbbbb', rows[1] + rows[2])
+
+    def test_single_video_stamp_unchanged(self):
+        data = {'kind': 'video', 'videos': [{'bvid': 'BV1aaaaaaaaa', 'title': 'A', 'parts': [
+            {'page': 1, 'part': 'P1', 'duration': 10, 'cid': 1}]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path, _, _ = write_outputs(merge_groups([data]), tmp)
+            self.assertEqual(Path(csv_path).name, 'BV1aaaaaaaaa-parts.csv')
 
 
 if __name__ == '__main__':

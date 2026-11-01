@@ -16,7 +16,9 @@
 - **单个视频**：给 BV 号（或 av 号、带 `?p=3` 的链接），列出它的分P。
 - **自动跳过补丁P**：隐藏 <30s 的分P（比如"宝箱数从 184 变为 177"这类 12 秒修正），可关闭。
 - **简介里的链接**：扫描视频简介和分P标题里提到的其他 B 站视频（BV / av / b23 / 系列），一键加进列表一起统计——攻略系列经常靠简介串起来。
-- **挑选后导出**：勾选任意视频，只按所选导出 CSV，附源视频与链接来源，方便做观看清单。
+- **增量追加**：解析完一个系列后，勾上「追加到当前列表」再贴下一个链接（系列 / 合集 / 单个 BV 都行），
+  新来源按 BV 号去重后并入同一张表，时长、勾选、导出全部按合并后的整体计算。
+- **挑选后导出**：勾选任意视频，只按所选导出 CSV，附源视频与来源标签，方便做观看清单。
 - **汇总卡片**：已选视频数 / 分P数 / 总时长 / 平均每P。
 
 示例（【原神】一条龙全收集，21 个稿件 / 574 个分P）：总时长 **84:28:59**，平均每个分P约 8.8 分钟。
@@ -43,7 +45,12 @@ python3 bili_planner.py 'https://space.bilibili.com/431073645/lists/4495895?type
 # 单个视频
 python3 bili_planner.py BV1L8xH6pEhr --out out
 
-# 只出汇总（不逐稿抓分P，秒回，适合大型合集）
+# 多个来源合并成一份记录（增量解析的命令行形态）
+python3 bili_planner.py BV1L8xH6pEhr BV1xw4m1v7cf --out out
+python3 bili_planner.py 'https://space.bilibili.com/431073645/lists/4495895?type=series' \
+    'https://space.bilibili.com/431073645/lists/3533058?type=season' --out out
+
+# 只出稿件级汇总（不逐稿抓分P，秒回，适合大型合集）
 python3 bili_planner.py 'https://space.bilibili.com/431073645/lists/261059?type=season' --no-parts
 
 # 输出 stdout JSON
@@ -64,17 +71,19 @@ python3 bili_planner.py BV1L8xH6pEhr --json
 
 CLI 会在 `--out` 目录写三份（网页端用浏览器导出）：
 
-- `{stamp}-parts.csv` — `bvid,title,owner,page,part,duration_s,duration_hms`
-- `{stamp}-summary.md` — 汇总表 + 简介/分P里提到的其他 B 站链接
+- `{stamp}-parts.csv` — `bvid,video_title,page,part_title,duration_s,duration_hms,cid,source`
+- `{stamp}-summary.md` — 汇总表（含来源列）+ 来源清单 + 简介/分P里提到的其他 B 站链接
 - `{stamp}-links.csv` — `source_bvid,source_title,kind,target,url`
 
-`stamp`：单视频用 BV 号，系列/合集用 `{series|season}-{oid}`。
+`stamp`：单视频用 BV 号，系列/合集用 `{series|season}-{oid}`，多来源合并用 `merged-{N}src`。
+`source` 列是来源标签（`series-4495895` / `video-BV…`），合并后仍能看清每个 P 来自哪个链接。
 
 ## 网页界面
 
 暗色单页，原生 JS，无框架、无构建：
 
 - 行内复选框筛选要看的视频；表头三态复选框全选/全不选。
+- 「追加到当前列表」：解析结果并入现有列表（BV 号去重），顶部来源条列出每条来源与稿件数。
 - 每行分P用总时长降序，长 P 一眼可见。
 - 简介链接以 chip 呈现：点文字在新标签打开，点 `+` 追加到当前列表。
 - "隐藏 <30s 分P"开关、"导出所选 CSV"按钮。
@@ -85,6 +94,7 @@ CLI 会在 `--out` 目录写三份（网页端用浏览器导出）：
 | --- | --- |
 | `GET /` | 单页应用 |
 | `GET /api/resolve?url=` | 解析链接 → 稿件列表（系列/合集/单视频），4 分钟内缓存 |
+| `GET /api/resolve?url=A&url=B` | 多个 url 参数 → 服务端合并（按 BV 去重），返回 `kind=merged` |
 | `GET /api/parts?bvid=` | 单个稿件的分P + 简介链接 + 总时长 |
 | `GET /healthz` | 存活探测 |
 
