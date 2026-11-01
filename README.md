@@ -118,42 +118,11 @@ nohup python3 bili_planner.py --host 127.0.0.1 --port 8770 > /tmp/bili-planner.l
 - 本服务无鉴权、无速率限制、无持久化——公网暴露前请在反代层加限流（例如 `limit_req`），或加一层访问口令。
 - 进程内缓存不落盘，重启即空；适合"工具型"小站，不适合高并发。
 
-## 项目结构
+## 文档地图
 
-```text
-bili_planner.py     # 抓取 + 聚合 + CLI + HTTP 服务（纯标准库）
-static/index.html   # 单页前端（内联 CSS/JS）
-test_planner.py     # unittest 用例（解析 / 聚合 / 合并 / 链接提取 / 输出）
-run.sh              # 启动脚本
-scripts/release.sh  # 发版：改版本号 + 跑测试 + 推 main（tag 与 Release 交给 CI）
-scripts/check_ui.py # 前端内联脚本语法自检（node --check）
-.github/workflows/  # CI：tests.yml 跑单测；release.yml 按 __version__ 自动打 tag 发 Release
-```
-
-## 测试
-
-```bash
-python3 -m unittest -v test_planner
-```
-
-30 个用例，覆盖输入解析、时长聚合、多来源合并去重、链接提取、输出写入。
-
-前端没有构建步骤，改过 `static/index.html` 记得跑 `python3 scripts/check_ui.py`（用 `node --check`
-兜住模板字符串把 JS 写坏的坑，CI 也会跑）。
-
-## 发版
-
-版本号只有一个来源：`bili_planner.py` 里的 `__version__`。**不要手工 `git tag` 或 `gh release create`。**
-
-```bash
-bash scripts/release.sh 1.1.2            # 改版本号 → 跑测试 → 提交 → 推 main
-bash scripts/release.sh 1.1.2 notes.md   # 顺带把发布说明写进 release-notes/v1.1.2.md
-bash scripts/release.sh 1.1.2 --no-push  # 只准备提交，不推
-```
-
-推上去之后 `.github/workflows/release.yml` 会：读 `__version__` → 跑测试 → tag `v1.1.2` → 发 Release
-（有 `release-notes/v1.1.2.md` 就用它，否则自动生成）。若已有同名 tag 却又有产品代码改动，
-workflow 会直接失败，提醒你补版本号——代码版本、tag、Release 三者始终一致。
+- 改代码 / 让 agent 改代码：`AGENTS.md`（命令、文件职责、不许漂移的契约）、`CODING_STANDARDS.md`（可判定的风格规则）。
+- 想知道内部怎么跑：`docs/architecture.md`；接口台账（端点、单位、坑）：`docs/bilibili-api.md`。
+- 术语与设计取舍：`CONTEXT.md`、`docs/adr/`。
 
 ## 已知限制
 
